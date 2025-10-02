@@ -38,16 +38,13 @@ MESSAGES = {
         "3. Receive your secret code\n"
         "4. Admin can refund with /refund if needed"
     ),
-    'refund_success': (
-        "✅ Refund completed successfully! Stars returned to user."
-    ),
-    'refund_failed': (
-        "❌ Refund failed. Try again later or contact support."
-    ),
+    'refund_success': "✅ Refund completed successfully! Stars returned to user.",
+    'refund_failed': "❌ Refund failed. Try again later or contact support.",
     'refund_usage': (
         "Please provide the transaction ID with /refund command.\n"
         "Example: `/refund YOUR_TRANSACTION_ID`"
     )
 }
 
-WELCOME_IMAGE = "https://example.com/welcome_image.png"
+# Direct image URL (your provided)
+WELCOME_IMAGE = "https://cpxmajor.gtrsadikbd.shop/icon.png"

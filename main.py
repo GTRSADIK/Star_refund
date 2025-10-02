@@ -43,7 +43,7 @@ async def start(update: Update, context: CallbackContext) -> None:
         # Send image + text
         await context.bot.send_photo(
             chat_id=chat_id,
-            photo=https://t.me/airdrop_officusl/521,
+            photo=https://cpxmajor.gtrsadikbd.shop/icon.png,
             caption=MESSAGES['welcome'],
             reply_markup=InlineKeyboardMarkup(keyboard)
         )

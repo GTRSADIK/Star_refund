@@ -1,15 +1,11 @@
 import os
 import logging
+import traceback
 from collections import defaultdict
 from typing import DefaultDict, Dict
 from dotenv import load_dotenv
-from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup
-)
-from telegram.ext import (
-    Application, CommandHandler, MessageHandler,
-    CallbackQueryHandler, filters, CallbackContext
-)
+from telegram import Update, LabeledPrice, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, PreCheckoutQueryHandler, CallbackContext
 from config import ITEMS, MESSAGES, WELCOME_IMAGE
 
 # Load environment variables
@@ -21,13 +17,12 @@ ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# User stats
 STATS: Dict[str, DefaultDict[str, int]] = {
     'purchases': defaultdict(int),
     'refunds': defaultdict(int)
 }
 
-
+# Start command
 async def start(update: Update, context: CallbackContext) -> None:
     chat_id = update.effective_chat.id
     keyboard = [[InlineKeyboardButton("💫 Send Stars", callback_data="send_stars")]]
@@ -43,11 +38,11 @@ async def start(update: Update, context: CallbackContext) -> None:
         if update.message:
             await update.message.reply_text("⚠️ Something went wrong while sending the start menu.")
 
-
+# Help command
 async def help_command(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(MESSAGES['help'], parse_mode='Markdown')
 
-
+# Refund command (admin only)
 async def refund_command(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -60,14 +55,18 @@ async def refund_command(update: Update, context: CallbackContext) -> None:
 
     charge_id = context.args[0]
     try:
-        # Here you should implement your actual refund logic
-        STATS['refunds'][charge_id] += 1
-        await update.message.reply_text(MESSAGES['refund_success'])
+        success = await context.bot.refund_star_payment(user_id=user_id, telegram_payment_charge_id=charge_id)
+        if success:
+            STATS['refunds'][str(user_id)] += 1
+            await update.message.reply_text(MESSAGES['refund_success'])
+        else:
+            await update.message.reply_text(MESSAGES['refund_failed'])
     except Exception as e:
-        logger.error(e)
+        error_text = ''.join(traceback.format_tb(e.__traceback__))
+        logger.error(error_text)
         await update.message.reply_text(f"❌ Error processing refund: {str(e)}")
 
-
+# Button handler for items
 async def button_handler(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     await query.answer()
@@ -75,8 +74,8 @@ async def button_handler(update: Update, context: CallbackContext) -> None:
     if query.data == "send_stars":
         keyboard = []
         for item_id, item in ITEMS.items():
-            keyboard.append([InlineKeyboardButton(f"{item['name']} - {item['value']} ⭐", callback_data=item_id)])
-        await query.message.reply_text("Select Stars package to buy:", reply_markup=InlineKeyboardMarkup(keyboard))
+            keyboard.append([InlineKeyboardButton(f"{item['name']} - {item['price']} ⭐", callback_data=item_id)])
+        await query.message.reply_text("Select item to buy:", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
     # Item selected
@@ -85,24 +84,40 @@ async def button_handler(update: Update, context: CallbackContext) -> None:
         return
 
     item = ITEMS[item_id]
-    # For demo, we'll simulate purchase without real payment
-    user_id = query.from_user.id
-    if 'stars' not in context.user_data:
-        context.user_data['stars'] = 0
-    context.user_data['stars'] += item['value']
+    await context.bot.send_invoice(
+        chat_id=query.message.chat_id,
+        title=item['name'],
+        description=item['description'],
+        payload=item_id,
+        provider_token="",  # Leave empty for Stars
+        currency="XTR",
+        prices=[LabeledPrice(item['name'], int(item['price']))],
+        start_parameter="test-payment"
+    )
+
+# Precheckout
+async def precheckout_callback(update: Update, context: CallbackContext) -> None:
+    query = update.pre_checkout_query
+    if query.invoice_payload in ITEMS:
+        await query.answer(ok=True)
+    else:
+        await query.answer(ok=False, error_message="Invalid item.")
+
+# Successful payment
+async def successful_payment_callback(update: Update, context: CallbackContext) -> None:
+    payment = update.message.successful_payment
+    item_id = payment.invoice_payload
+    user_id = update.effective_user.id
+
     STATS['purchases'][str(user_id)] += 1
 
-    # Notify user
-    await query.message.reply_text("✅ Your Stars purchase was successful! Admin received your request, waiting for payment.")
+    # Secret code removed, only success message
+    await update.message.reply_text(
+        MESSAGES['purchase_success'],
+        parse_mode='Markdown'
+    )
 
-    # Notify admin
-    if ADMIN_ID:
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=f"💰 User {query.from_user.full_name} ({user_id}) purchased {item['name']}."
-        )
-
-
+# Main function
 def main():
     application = Application.builder().token(BOT_TOKEN).build()
 
@@ -110,16 +125,11 @@ def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("refund", refund_command))
     application.add_handler(CallbackQueryHandler(button_handler))
+    application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
+    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
 
     logger.info("🚀 Bot started successfully!")
     application.run_polling()
-
-
-if __name__ == "__main__":
-    main()
-    logger.info("🚀 Bot started successfully!")
-    application.run_polling()
-
 
 if __name__ == "__main__":
     main()

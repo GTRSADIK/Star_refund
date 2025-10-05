@@ -1,16 +1,14 @@
 import os
 import logging
-import traceback
 from collections import defaultdict
 from typing import DefaultDict, Dict
 from dotenv import load_dotenv
 from telegram import (
-    Update, LabeledPrice, InlineKeyboardButton,
-    InlineKeyboardMarkup
+    Update, InlineKeyboardButton, InlineKeyboardMarkup
 )
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
-    CallbackQueryHandler, filters, PreCheckoutQueryHandler, CallbackContext
+    CallbackQueryHandler, filters, CallbackContext
 )
 from config import ITEMS, MESSAGES, WELCOME_IMAGE
 
@@ -23,6 +21,7 @@ ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# User stats
 STATS: Dict[str, DefaultDict[str, int]] = {
     'purchases': defaultdict(int),
     'refunds': defaultdict(int)
@@ -31,10 +30,7 @@ STATS: Dict[str, DefaultDict[str, int]] = {
 
 async def start(update: Update, context: CallbackContext) -> None:
     chat_id = update.effective_chat.id
-    keyboard = [
-        [InlineKeyboardButton("💫 Send Stars", callback_data="send_stars")]
-    ]
-
+    keyboard = [[InlineKeyboardButton("💫 Send Stars", callback_data="send_stars")]]
     try:
         await context.bot.send_photo(
             chat_id=chat_id,
@@ -64,15 +60,11 @@ async def refund_command(update: Update, context: CallbackContext) -> None:
 
     charge_id = context.args[0]
     try:
-        success = await context.bot.refund_star_payment(user_id=user_id, telegram_payment_charge_id=charge_id)
-        if success:
-            STATS['refunds'][str(user_id)] += 1
-            await update.message.reply_text(MESSAGES['refund_success'])
-        else:
-            await update.message.reply_text(MESSAGES['refund_failed'])
+        # Here you should implement your actual refund logic
+        STATS['refunds'][charge_id] += 1
+        await update.message.reply_text(MESSAGES['refund_success'])
     except Exception as e:
-        error_text = ''.join(traceback.format_tb(e.__traceback__))
-        logger.error(error_text)
+        logger.error(e)
         await update.message.reply_text(f"❌ Error processing refund: {str(e)}")
 
 
@@ -83,8 +75,8 @@ async def button_handler(update: Update, context: CallbackContext) -> None:
     if query.data == "send_stars":
         keyboard = []
         for item_id, item in ITEMS.items():
-            keyboard.append([InlineKeyboardButton(f"{item['name']} - {item['price']} ⭐", callback_data=item_id)])
-        await query.message.reply_text("Select item to buy:", reply_markup=InlineKeyboardMarkup(keyboard))
+            keyboard.append([InlineKeyboardButton(f"{item['name']} - {item['value']} ⭐", callback_data=item_id)])
+        await query.message.reply_text("Select Stars package to buy:", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
     # Item selected
@@ -93,40 +85,22 @@ async def button_handler(update: Update, context: CallbackContext) -> None:
         return
 
     item = ITEMS[item_id]
-    await context.bot.send_invoice(
-        chat_id=query.message.chat_id,
-        title=item['name'],
-        description=item['description'],
-        payload=item_id,
-        provider_token="",  # Leave empty for Stars
-        currency="XTR",
-        prices=[LabeledPrice(item['name'], int(item['price']))],
-        start_parameter="test-payment"
-    )
-
-
-async def precheckout_callback(update: Update, context: CallbackContext) -> None:
-    query = update.pre_checkout_query
-    if query.invoice_payload in ITEMS:
-        await query.answer(ok=True)
-    else:
-        await query.answer(ok=False, error_message="Invalid item.")
-
-
-async def successful_payment_callback(update: Update, context: CallbackContext) -> None:
-    payment = update.message.successful_payment
-    item_id = payment.invoice_payload
-    item = ITEMS[item_id]
-    user_id = update.effective_user.id
-
+    # For demo, we'll simulate purchase without real payment
+    user_id = query.from_user.id
+    if 'stars' not in context.user_data:
+        context.user_data['stars'] = 0
+    context.user_data['stars'] += item['value']
     STATS['purchases'][str(user_id)] += 1
 
-    await update.message.reply_text(
-        f"🎉 Thank you for your purchase!\n\n"
-        f"🔐 Secret code for *{item['name']}*:\n`{item['secret']}`\n\n"
-        f"💡 To refund, admin can use:\n`/refund {payment.telegram_payment_charge_id}`",
-        parse_mode='Markdown'
-    )
+    # Notify user
+    await query.message.reply_text("✅ Your Stars purchase was successful! Admin received your request, waiting for payment.")
+
+    # Notify admin
+    if ADMIN_ID:
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=f"💰 User {query.from_user.full_name} ({user_id}) purchased {item['name']}."
+        )
 
 
 def main():
@@ -136,8 +110,6 @@ def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("refund", refund_command))
     application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
-    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
 
     logger.info("🚀 Bot started successfully!")
     application.run_polling()

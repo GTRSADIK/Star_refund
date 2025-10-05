@@ -117,3 +117,9 @@ def main():
 
 if __name__ == "__main__":
     main()
+    logger.info("🚀 Bot started successfully!")
+    application.run_polling()
+
+
+if __name__ == "__main__":
+    main()

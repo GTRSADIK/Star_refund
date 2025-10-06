@@ -1,15 +1,12 @@
 import os
+import json
 import logging
 import traceback
-import uuid
 from collections import defaultdict
 from typing import DefaultDict, Dict
 from dotenv import load_dotenv
-from telegram import Update, LabeledPrice, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application, CommandHandler, MessageHandler,
-    CallbackQueryHandler, filters, PreCheckoutQueryHandler, CallbackContext
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, PreCheckoutQueryHandler, CallbackContext
 from config import ITEMS, MESSAGES, WELCOME_IMAGE
 
 # Load environment variables
@@ -18,18 +15,30 @@ BOT_TOKEN = os.getenv('BOT_TOKEN')
 ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
 
 # Logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Stats and transactions
+# Stats & Transactions
 STATS: Dict[str, DefaultDict[str, int]] = {
     'purchases': defaultdict(int),
     'refunds': defaultdict(int)
 }
-TRANSACTIONS: Dict[str, Dict] = {}  # transaction_id -> data
+
+TRANSACTION_FILE = "transactions.json"
+if not os.path.exists(TRANSACTION_FILE):
+    with open(TRANSACTION_FILE, "w") as f:
+        json.dump({}, f)
+
+def load_transactions():
+    with open(TRANSACTION_FILE, "r") as f:
+        return json.load(f)
+
+def save_transactions(transactions=None):
+    transactions = transactions or {}
+    with open(TRANSACTION_FILE, "w") as f:
+        json.dump(transactions, f, indent=4)
+
+TRANSACTIONS = load_transactions()
 
 # Start command
 async def start(update: Update, context: CallbackContext) -> None:
@@ -51,7 +60,7 @@ async def start(update: Update, context: CallbackContext) -> None:
 async def help_command(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(MESSAGES['help'], parse_mode='Markdown')
 
-# Refund command (admin only)
+# Refund command (admin-only)
 async def refund_command(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -59,29 +68,23 @@ async def refund_command(update: Update, context: CallbackContext) -> None:
         return
 
     if not context.args:
-        await update.message.reply_text("Usage: /refund <transaction_id>")
+        await update.message.reply_text(MESSAGES['refund_usage'])
         return
 
     transaction_id = context.args[0]
     if transaction_id not in TRANSACTIONS:
-        await update.message.reply_text(f"❌ Invalid transaction ID: {transaction_id}")
+        await update.message.reply_text("❌ Invalid transaction ID.")
         return
 
-    data = TRANSACTIONS.pop(transaction_id)
-    user_id_refund = data['user_id']
-    item_price = data['price']
-    STATS['refunds'][str(user_id_refund)] += item_price
+    transaction = TRANSACTIONS.pop(transaction_id)
+    save_transactions(TRANSACTIONS)
 
-    await update.message.reply_text(f"✅ Refund successful: {item_price} XTR refunded from transaction {transaction_id}")
+    stars = transaction['stars']
+    STATS['refunds'][str(ADMIN_ID)] += stars
 
-    # Notify admin
-    try:
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=f"💰 Admin processed refund:\nUser ID: {user_id_refund}\nAmount: {item_price} XTR\nTransaction: {transaction_id}"
-        )
-    except Exception as e:
-        logger.error(f"Failed to send admin notification: {e}")
+    await update.message.reply_text(
+        f"✅ Refund successful!\n{stars}⭐ added to admin balance."
+    )
 
 # Button handler for items
 async def button_handler(update: Update, context: CallbackContext) -> None:
@@ -102,11 +105,11 @@ async def button_handler(update: Update, context: CallbackContext) -> None:
 
     item = ITEMS[item_id]
     await context.bot.send_invoice(
-        chat_id=query.message.chat_id,
+        chat_id=query.message.chat.id,
         title=item['name'],
         description=item['description'],
         payload=item_id,
-        provider_token="",  # XTR stars payment
+        provider_token="",  # Leave empty for Stars
         currency="XTR",
         prices=[LabeledPrice(item['name'], int(item['price']))],
         start_parameter="test-payment"
@@ -127,21 +130,24 @@ async def successful_payment_callback(update: Update, context: CallbackContext) 
     item = ITEMS[item_id]
     user = update.effective_user
     user_id = user.id
-    username = f"@{user.username}" if user.username else f"ID: {user_id}"
+    username = f"@{user.username}" if user.username else f"ID:{user_id}"
+    stars = int(item['price'])
 
-    # Generate transaction ID
-    transaction_id = str(uuid.uuid4())
+    # Save transaction
+    transaction_id = payment.telegram_payment_charge_id
     TRANSACTIONS[transaction_id] = {
-        'user_id': user_id,
-        'item_id': item_id,
-        'price': int(item['price'])
+        "user_id": user_id,
+        "username": username,
+        "stars": stars,
+        "item": item['name']
     }
+    save_transactions(TRANSACTIONS)
 
-    STATS['purchases'][str(user_id)] += int(item['price'])
+    STATS['purchases'][str(user_id)] += stars
 
     # Notify user
     await update.message.reply_text(
-        f"✅ {item['price']} ⭐ successfully sent!\n💰 Transaction ID: `{transaction_id}`\n💡 Refund possible only by admin.",
+        f"✅ {stars}⭐ successfully sent!\n💰 Waiting for admin payment within 1 hour.",
         parse_mode='Markdown'
     )
 
@@ -149,7 +155,7 @@ async def successful_payment_callback(update: Update, context: CallbackContext) 
     try:
         await context.bot.send_message(
             chat_id=ADMIN_ID,
-            text=f"📩 User {username} purchased {item['price']} ⭐\nItem: {item['name']}\nTransaction ID: {transaction_id}",
+            text=f"📩 User {username} just sent {stars}⭐ for *{item['name']}*.\nTransaction ID: `{transaction_id}`",
             parse_mode='Markdown'
         )
     except Exception as e:

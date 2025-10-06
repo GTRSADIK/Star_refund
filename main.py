@@ -3,7 +3,10 @@ import json
 import logging
 from collections import defaultdict
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, PreCheckoutQueryHandler, MessageHandler, filters, CallbackContext, ConversationHandler
+from telegram.ext import (
+    Application, CommandHandler, CallbackQueryHandler,
+    PreCheckoutQueryHandler, MessageHandler, filters, CallbackContext
+)
 from dotenv import load_dotenv
 from config import ITEMS, MESSAGES, WELCOME_IMAGE
 
@@ -32,7 +35,7 @@ def save_transactions():
 # Global temp storage for broadcast
 ADMIN_STATE = {}
 
-# Start
+# Start command
 async def start(update: Update, context: CallbackContext):
     keyboard = [[InlineKeyboardButton("💫 Send Stars", callback_data="send_stars")]]
     await update.message.reply_photo(
@@ -41,11 +44,33 @@ async def start(update: Update, context: CallbackContext):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# Help
+# Help command
 async def help_command(update: Update, context: CallbackContext):
     await update.message.reply_text(MESSAGES['help'])
 
-# Refund (admin only)
+# Get ID command
+async def getid_command(update: Update, context: CallbackContext):
+    """Send user's Telegram ID or another user's ID by username."""
+    if context.args:
+        username = context.args[0].lstrip('@')
+        try:
+            user = await context.bot.get_chat(username)
+            await update.message.reply_text(
+                f"👤 Username: @{username}\n🆔 ID: `{user.id}`",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ Could not find username @{username}\nError: {e}"
+            )
+    else:
+        user = update.effective_user
+        await update.message.reply_text(
+            f"👤 Your name: {user.first_name}\n🆔 Your ID: `{user.id}`",
+            parse_mode="Markdown"
+        )
+
+# Refund command (admin only)
 async def refund_command(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -65,9 +90,11 @@ async def refund_command(update: Update, context: CallbackContext):
     save_transactions()
     STATS['refunds'][str(ADMIN_ID)] += transaction['stars']
 
-    await update.message.reply_text(f"✅ Refund successful! {transaction['stars']}⭐ refunded from transaction {transaction_id}.")
+    await update.message.reply_text(
+        f"✅ Refund successful! {transaction['stars']}⭐ refunded from transaction {transaction_id}."
+    )
 
-# Broadcast (Admin only)
+# Broadcast command (admin only)
 async def broadcast_command(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -87,7 +114,10 @@ async def handle_admin_message(update: Update, context: CallbackContext):
         try:
             target_id = int(update.message.text.strip())
             ADMIN_STATE[user_id] = {"step": "ask_message", "target_id": target_id}
-            await update.message.reply_text(f"✅ Target user set: `{target_id}`\nNow send the message you want to deliver:", parse_mode="Markdown")
+            await update.message.reply_text(
+                f"✅ Target user set: `{target_id}`\nNow send the message you want to deliver:",
+                parse_mode="Markdown"
+            )
         except ValueError:
             await update.message.reply_text("❌ Invalid ID. Please send numeric Telegram user ID.")
         return
@@ -99,19 +129,25 @@ async def handle_admin_message(update: Update, context: CallbackContext):
 
         try:
             await context.bot.send_message(chat_id=target_id, text=text_to_send)
-            await update.message.reply_text(f"✅ Message delivered successfully to `{target_id}`", parse_mode="Markdown")
+            await update.message.reply_text(
+                f"✅ Message delivered successfully to `{target_id}`",
+                parse_mode="Markdown"
+            )
         except Exception as e:
             await update.message.reply_text(f"❌ Failed to send: {e}")
         ADMIN_STATE.pop(user_id, None)
         return
 
-# Inline buttons
+# Inline button handler
 async def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
 
     if query.data == "send_stars":
-        keyboard = [[InlineKeyboardButton(f"{item['name']} - {item['price']}⭐", callback_data=item_id)] for item_id, item in ITEMS.items()]
+        keyboard = [
+            [InlineKeyboardButton(f"{item['name']} - {item['price']}⭐", callback_data=item_id)]
+            for item_id, item in ITEMS.items()
+        ]
         await query.message.reply_text("Select item to buy:", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
@@ -125,13 +161,13 @@ async def button_handler(update: Update, context: CallbackContext):
         title=item['name'],
         description=item['description'],
         payload=item_id,
-        provider_token="",  # For test mode
+        provider_token="",  # Test mode
         currency="XTR",
         prices=[LabeledPrice(item['name'], int(item['price']))],
         start_parameter="test-payment"
     )
 
-# Pre-checkout
+# Pre-checkout callback
 async def precheckout_callback(update: Update, context: CallbackContext):
     query = update.pre_checkout_query
     if query.invoice_payload in ITEMS:
@@ -139,7 +175,7 @@ async def precheckout_callback(update: Update, context: CallbackContext):
     else:
         await query.answer(ok=False, error_message="Invalid item payload.")
 
-# Payment success
+# Successful payment callback
 async def successful_payment_callback(update: Update, context: CallbackContext):
     payment = update.message.successful_payment
     item_id = payment.invoice_payload
@@ -172,6 +208,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("getid", getid_command))
     app.add_handler(CommandHandler("refund", refund_command))
     app.add_handler(CommandHandler("broadcast", broadcast_command))
     app.add_handler(CallbackQueryHandler(button_handler))

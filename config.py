@@ -2,35 +2,35 @@ from typing import Dict, Any
 
 # Star packages for purchase
 ITEMS: Dict[str, Dict[str, Any]] = {
-    'stars_3': {
-        'name': 'FARM GIFT STAR ✨',
-        'price': 3,
-        'description': '0.012×3=0.036 USDT',
-        'value': 3
-    },
-    'stars_15': {
-        'name': 'FARM GOFT STAR ✨',
-        'price': 15,
-        'description': '0.012×15=0.18 USDT',
-        'value': 15
-    },
-    'stars_25': {
-        'name': 'FARM GIFT STAR ✨',
-        'price': 25,
-        'description': '0.012×25=0.3 USDT',
-        'value': 25
-    },
     'stars_100': {
-        'name': 'FARM GIFT FARM ✨',
+        'name': 'FARM GIFT STAR ✨',
         'price': 100,
-        'description': '0.012×100=1.2 JSDT',
+        'description': '0.012×100=1.2 USDT',
         'value': 100
     },
     'stars_200': {
-        'name': 'FARM GIFT STAR ✨',
+        'name': 'FARM GOFT STAR ✨',
         'price': 200,
         'description': '0.012×200=2.4 USDT',
         'value': 200
+    },
+    'stars_500': {
+        'name': 'FARM GIFT STAR ✨',
+        'price': 500,
+        'description': '0.012×500=5.1 USDT',
+        'value': 500
+    },
+    'stars_1000': {
+        'name': 'FARM GIFT FARM ✨',
+        'price': 1000,
+        'description': '0.012×1000=10.2 JSDT',
+        'value': 1000
+    },
+    'stars_2000': {
+        'name': 'FARM GIFT STAR ✨',
+        'price': 2000,
+        'description': '0.012×200=20.4 USDT',
+        'value': 2000
     }
 }
 

@@ -6,7 +6,10 @@ from collections import defaultdict
 from typing import DefaultDict, Dict
 from dotenv import load_dotenv
 from telegram import Update, LabeledPrice, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, PreCheckoutQueryHandler, CallbackContext
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler,
+    CallbackQueryHandler, filters, PreCheckoutQueryHandler, CallbackContext
+)
 from config import ITEMS, MESSAGES, WELCOME_IMAGE
 
 # Load environment variables
@@ -15,16 +18,18 @@ BOT_TOKEN = os.getenv('BOT_TOKEN')
 ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
 
 # Logging
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
-# Stats dict
-STATS: Dict[str, Dict] = {
-    'purchases': defaultdict(int),      # user_id -> total purchases
-    'refunds': defaultdict(int),        # user_id -> total refunds
-    'transactions': {},                 # transaction_id -> {user, item, stars}
-    'admin_balance': defaultdict(int)   # admin_id -> stars
+# Stats and transactions
+STATS: Dict[str, DefaultDict[str, int]] = {
+    'purchases': defaultdict(int),
+    'refunds': defaultdict(int)
 }
+TRANSACTIONS: Dict[str, Dict] = {}  # transaction_id -> data
 
 # Start command
 async def start(update: Update, context: CallbackContext) -> None:
@@ -58,21 +63,25 @@ async def refund_command(update: Update, context: CallbackContext) -> None:
         return
 
     transaction_id = context.args[0]
-    txn = STATS['transactions'].get(transaction_id)
-    if not txn:
-        await update.message.reply_text("❌ Transaction ID not found or already refunded.")
+    if transaction_id not in TRANSACTIONS:
+        await update.message.reply_text(f"❌ Invalid transaction ID: {transaction_id}")
         return
 
-    # Add stars to admin balance
-    STATS['admin_balance'][ADMIN_ID] += txn['stars']
+    data = TRANSACTIONS.pop(transaction_id)
+    user_id_refund = data['user_id']
+    item_price = data['price']
+    STATS['refunds'][str(user_id_refund)] += item_price
 
-    # Remove transaction after refund
-    STATS['transactions'].pop(transaction_id)
+    await update.message.reply_text(f"✅ Refund successful: {item_price} XTR refunded from transaction {transaction_id}")
 
-    await update.message.reply_text(
-        f"✅ Refund completed. {txn['stars']}⭐ added to admin balance.\n"
-        f"User: {txn['username']}\nItem: {txn['item']}\nTransaction ID: {transaction_id}"
-    )
+    # Notify admin
+    try:
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=f"💰 Admin processed refund:\nUser ID: {user_id_refund}\nAmount: {item_price} XTR\nTransaction: {transaction_id}"
+        )
+    except Exception as e:
+        logger.error(f"Failed to send admin notification: {e}")
 
 # Button handler for items
 async def button_handler(update: Update, context: CallbackContext) -> None:
@@ -97,13 +106,13 @@ async def button_handler(update: Update, context: CallbackContext) -> None:
         title=item['name'],
         description=item['description'],
         payload=item_id,
-        provider_token="",  # Empty for stars system
+        provider_token="",  # XTR stars payment
         currency="XTR",
         prices=[LabeledPrice(item['name'], int(item['price']))],
-        start_parameter="star-payment"
+        start_parameter="test-payment"
     )
 
-# Precheckout callback
+# Precheckout
 async def precheckout_callback(update: Update, context: CallbackContext) -> None:
     query = update.pre_checkout_query
     if query.invoice_payload in ITEMS:
@@ -120,31 +129,27 @@ async def successful_payment_callback(update: Update, context: CallbackContext) 
     user_id = user.id
     username = f"@{user.username}" if user.username else f"ID: {user_id}"
 
-    # Increment user purchases
-    STATS['purchases'][str(user_id)] += item['price']
-
-    # Create unique transaction ID
+    # Generate transaction ID
     transaction_id = str(uuid.uuid4())
-    STATS['transactions'][transaction_id] = {
+    TRANSACTIONS[transaction_id] = {
         'user_id': user_id,
-        'username': username,
-        'item': item['name'],
-        'stars': item['price']
+        'item_id': item_id,
+        'price': int(item['price'])
     }
 
-    # User confirmation
+    STATS['purchases'][str(user_id)] += int(item['price'])
+
+    # Notify user
     await update.message.reply_text(
-        f"✅ {item['price']}⭐ successfully sent!\n"
-        f"Transaction ID: `{transaction_id}`\n"
-        f"💰 Waiting for admin payment within 1 hour.",
+        f"✅ {item['price']} ⭐ successfully sent!\n💰 Transaction ID: `{transaction_id}`\n💡 Refund possible only by admin.",
         parse_mode='Markdown'
     )
 
-    # Notify Admin
+    # Notify admin
     try:
         await context.bot.send_message(
             chat_id=ADMIN_ID,
-            text=f"📩 User {username} just sent {item['price']}⭐ for *{item['name']}*.\nTransaction ID: `{transaction_id}`",
+            text=f"📩 User {username} purchased {item['price']} ⭐\nItem: {item['name']}\nTransaction ID: {transaction_id}",
             parse_mode='Markdown'
         )
     except Exception as e:

@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from telegram import Update, LabeledPrice, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, PreCheckoutQueryHandler, CallbackContext
 from config import ITEMS, MESSAGES, WELCOME_IMAGE
+import uuid
 
 # Load environment variables
 load_dotenv()
@@ -17,10 +18,13 @@ ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Stats and transactions
 STATS: Dict[str, DefaultDict[str, int]] = {
     'purchases': defaultdict(int),
     'refunds': defaultdict(int)
 }
+
+TRANSACTIONS: Dict[str, Dict] = {}  # transaction_id -> info
 
 # Start command
 async def start(update: Update, context: CallbackContext) -> None:
@@ -50,17 +54,28 @@ async def refund_command(update: Update, context: CallbackContext) -> None:
         return
 
     if not context.args:
-        await update.message.reply_text(MESSAGES['refund_usage'])
+        await update.message.reply_text("Usage: /refund <transaction_id>")
         return
 
-    charge_id = context.args[0]
+    transaction_id = context.args[0]
+    transaction = TRANSACTIONS.get(transaction_id)
+
+    if not transaction:
+        await update.message.reply_text("❌ Transaction ID not found.")
+        return
+
     try:
-        success = await context.bot.refund_star_payment(user_id=user_id, telegram_payment_charge_id=charge_id)
-        if success:
-            STATS['refunds'][str(user_id)] += 1
-            await update.message.reply_text(MESSAGES['refund_success'])
-        else:
-            await update.message.reply_text(MESSAGES['refund_failed'])
+        # Refund logic
+        buyer_id = transaction['user_id']
+        STATS['refunds'][str(buyer_id)] += 1
+        del TRANSACTIONS[transaction_id]
+
+        await update.message.reply_text(f"✅ Refund successful for Transaction ID: {transaction_id}")
+        # Optionally notify user
+        await context.bot.send_message(
+            chat_id=buyer_id,
+            text=f"💸 Your transaction {transaction_id} has been refunded by admin."
+        )
     except Exception as e:
         error_text = ''.join(traceback.format_tb(e.__traceback__))
         logger.error(error_text)
@@ -89,7 +104,7 @@ async def button_handler(update: Update, context: CallbackContext) -> None:
         title=item['name'],
         description=item['description'],
         payload=item_id,
-        provider_token="",  # Leave empty for Stars
+        provider_token="",  # leave empty for Stars
         currency="XTR",
         prices=[LabeledPrice(item['name'], int(item['price']))],
         start_parameter="test-payment"
@@ -112,11 +127,19 @@ async def successful_payment_callback(update: Update, context: CallbackContext) 
     user_id = user.id
     username = f"@{user.username}" if user.username else f"ID: {user_id}"
 
+    # Generate a unique transaction ID
+    transaction_id = str(uuid.uuid4())
+    TRANSACTIONS[transaction_id] = {
+        'user_id': user_id,
+        'item': item['name'],
+        'price': item['price']
+    }
+
     STATS['purchases'][str(user_id)] += 1
 
     # User confirmation
     await update.message.reply_text(
-        f"✅ {item['price']} Star ⭐ successfully sent!\n💰 Waiting for admin payment within 1 hour.",
+        f"✅ {item['price']} Star ⭐ successfully sent!\n💰 Waiting for admin payment within 1 hour.\nTransaction ID: `{transaction_id}`",
         parse_mode='Markdown'
     )
 
@@ -124,7 +147,7 @@ async def successful_payment_callback(update: Update, context: CallbackContext) 
     try:
         await context.bot.send_message(
             chat_id=ADMIN_ID,
-            text=f"📩 User {username} just sent {item['price']}⭐ for *{item['name']}*.",
+            text=f"📩 User {username} just sent {item['price']}⭐ for *{item['name']}*.\nTransaction ID: `{transaction_id}`",
             parse_mode='Markdown'
         )
     except Exception as e:

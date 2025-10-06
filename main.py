@@ -6,8 +6,8 @@ from typing import DefaultDict, Dict
 from dotenv import load_dotenv
 from telegram import Update, LabeledPrice, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler,
-    CallbackQueryHandler, filters, PreCheckoutQueryHandler, CallbackContext
+    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
+    PreCheckoutQueryHandler, CallbackContext, filters
 )
 from config import ITEMS, MESSAGES, WELCOME_IMAGE
 
@@ -17,16 +17,17 @@ BOT_TOKEN = os.getenv('BOT_TOKEN')
 ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
 
 # Logging
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
-# Stats & balances
+# Stats: admin balance and transactions
 STATS: Dict[str, DefaultDict] = {
-    'purchases': defaultdict(list),   # user_id -> list of payments
-    'refunds': defaultdict(list)      # user_id -> list of refunded payments
+    'admin_balance': defaultdict(int),   # Admin star balance
+    'transactions': {}                   # Stores transaction_id -> {'user_id': x, 'username': y, 'item': z, 'stars': n}
 }
-
-ADMIN_BALANCE = 0
 
 # Start command
 async def start(update: Update, context: CallbackContext) -> None:
@@ -48,47 +49,28 @@ async def start(update: Update, context: CallbackContext) -> None:
 async def help_command(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(MESSAGES['help'], parse_mode='Markdown')
 
-# Refund command (user can refund, stars go to admin)
+# Refund command (admin only)
 async def refund_command(update: Update, context: CallbackContext) -> None:
-    global ADMIN_BALANCE
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("🚫 Only admin can use this command.")
+        return
+
     if not context.args:
         await update.message.reply_text("Usage: /refund <transaction_id>")
         return
 
-    refund_id = context.args[0]
-    found = False
-    user_id = update.effective_user.id
-    username = f"@{update.effective_user.username}" if update.effective_user.username else f"ID: {user_id}"
+    transaction_id = context.args[0]
+    if transaction_id not in STATS['transactions']:
+        await update.message.reply_text("❌ Invalid transaction ID.")
+        return
 
-    # Search in purchases
-    for uid, tx_list in STATS['purchases'].items():
-        for tx in tx_list:
-            if tx['id'] == refund_id:
-                # Remove from user
-                tx_list.remove(tx)
-                STATS['refunds'][uid].append(tx)
+    txn = STATS['transactions'].pop(transaction_id)
+    STATS['admin_balance'][ADMIN_ID] += txn['stars']
 
-                # Add stars to admin balance
-                ADMIN_BALANCE += tx['stars']
-
-                found = True
-
-                # Notify admin
-                try:
-                    await context.bot.send_message(
-                        chat_id=ADMIN_ID,
-                        text=f"📩 Refund processed!\nUser: {username}\nStars refunded: {tx['stars']}\nTransaction ID: {refund_id}\nAdmin balance: {ADMIN_BALANCE}"
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to notify admin: {e}")
-
-                await update.message.reply_text(f"✅ Refund successful. Stars sent to admin.")
-                break
-        if found:
-            break
-
-    if not found:
-        await update.message.reply_text(f"❌ Transaction ID {refund_id} not found")
+    await update.message.reply_text(
+        f"✅ Refund completed. {txn['stars']}⭐ added to admin balance."
+    )
 
 # Button handler for items
 async def button_handler(update: Update, context: CallbackContext) -> None:
@@ -113,7 +95,7 @@ async def button_handler(update: Update, context: CallbackContext) -> None:
         title=item['name'],
         description=item['description'],
         payload=item_id,
-        provider_token="",  # leave empty for Stars
+        provider_token="",  # Leave empty for Stars
         currency="XTR",
         prices=[LabeledPrice(item['name'], int(item['price']))],
         start_parameter="test-payment"
@@ -134,32 +116,35 @@ async def successful_payment_callback(update: Update, context: CallbackContext) 
     item = ITEMS[item_id]
     user = update.effective_user
     user_id = user.id
-    username = f"@{user.username}" if user.username else f"ID: {user_id}"
+    username = f"@{user.username}" if user.username else f"ID:{user_id}"
+    transaction_id = payment.telegram_payment_charge_id
 
-    # Save transaction
-    STATS['purchases'][str(user_id)].append({
-        "id": payment.telegram_payment_charge_id,
-        "stars": item['price'],
-        "item": item['name']
-    })
+    # Save transaction for admin
+    STATS['transactions'][transaction_id] = {
+        'user_id': user_id,
+        'username': username,
+        'item': item_id,
+        'stars': item['price']
+    }
 
     # Notify user
     await update.message.reply_text(
-        f"✅ {item['price']} Star(s) successfully sent!\n💰 Waiting for admin payment within 1 hour.",
+        f"✅ {item['price']}⭐ successfully sent!\n"
+        f"💰 Admin will confirm within 1 hour.",
         parse_mode='Markdown'
     )
 
-    # Notify admin
+    # Notify Admin
     try:
         await context.bot.send_message(
             chat_id=ADMIN_ID,
-            text=f"📩 User {username} just sent {item['price']}⭐ for *{item['name']}*.\nTransaction ID: {payment.telegram_payment_charge_id}",
+            text=f"📩 Transaction ID: {transaction_id}\nUser {username} sent {item['price']}⭐ for *{item['name']}*.",
             parse_mode='Markdown'
         )
     except Exception as e:
-        logger.error(f"Failed to notify admin: {e}")
+        logger.error(f"Failed to send admin notification: {e}")
 
-# Main
+# Main function
 def main():
     application = Application.builder().token(BOT_TOKEN).build()
 

@@ -107,15 +107,28 @@ async def precheckout_callback(update: Update, context: CallbackContext) -> None
 async def successful_payment_callback(update: Update, context: CallbackContext) -> None:
     payment = update.message.successful_payment
     item_id = payment.invoice_payload
-    user_id = update.effective_user.id
+    item = ITEMS[item_id]
+    user = update.effective_user
+    user_id = user.id
+    username = f"@{user.username}" if user.username else f"ID: {user_id}"
 
     STATS['purchases'][str(user_id)] += 1
 
-    # Secret code removed, only success message
+    # User confirmation
     await update.message.reply_text(
-        MESSAGES['purchase_success'],
+        f"✅ {item['price']} Star ⭐ successfully sent!\n💰 Waiting for admin payment within 1 hour.",
         parse_mode='Markdown'
     )
+
+    # Notify Admin
+    try:
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=f"📩 User {username} just sent {item['price']}⭐ for *{item['name']}*.",
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        logger.error(f"Failed to send admin notification: {e}")
 
 # Main function
 def main():

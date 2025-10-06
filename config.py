@@ -3,33 +3,33 @@ from typing import Dict, Any
 # Star packages for purchase
 ITEMS: Dict[str, Dict[str, Any]] = {
     'stars_3': {
-        'name': '3 Stars ✨',
+        'name': 'FARM GIFT STAR ✨',
         'price': 3,
-        'description': '3 Star ⭐ successfuly sent for admin payment time 1 hours',
+        'description': '0.012×3=0.036 USDT',
         'value': 3
     },
     'stars_15': {
-        'name': '15 Stars ✨',
+        'name': 'FARM GOFT STAR ✨',
         'price': 15,
-        'description': '15 Star ⭐ successfuly sent for admin payment time 1 hours',
+        'description': '0.012×15=0.18 USDT',
         'value': 15
     },
     'stars_25': {
-        'name': '25 Stars ✨',
+        'name': 'FARM GIFT STAR ✨',
         'price': 25,
-        'description': '25 Star ⭐ successfuly sent for admin payment time 1 hours',
+        'description': '0.012×25=0.3 USDT',
         'value': 25
     },
     'stars_100': {
-        'name': '100 Stars ✨',
+        'name': 'FARM GIFT FARM ✨',
         'price': 100,
-        'description': '100 Star ⭐ successfuly sent for admin payment time 1 hours',
+        'description': '0.012×100=1.2 JSDT',
         'value': 100
     },
     'stars_200': {
-        'name': '200 Stars ✨',
+        'name': 'FARM GIFT STAR ✨',
         'price': 200,
-        'description': '200 Star ⭐ successfuly sent for admin payment time 1 hours',
+        'description': '0.012×200=2.4 USDT',
         'value': 200
     }
 }

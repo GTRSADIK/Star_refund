@@ -5,9 +5,11 @@ from collections import defaultdict
 from typing import DefaultDict, Dict
 from dotenv import load_dotenv
 from telegram import Update, LabeledPrice, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, PreCheckoutQueryHandler, CallbackContext
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler,
+    CallbackQueryHandler, filters, PreCheckoutQueryHandler, CallbackContext
+)
 from config import ITEMS, MESSAGES, WELCOME_IMAGE
-import uuid
 
 # Load environment variables
 load_dotenv()
@@ -18,13 +20,13 @@ ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Stats and transactions
-STATS: Dict[str, DefaultDict[str, int]] = {
-    'purchases': defaultdict(int),
-    'refunds': defaultdict(int)
+# Stats & balances
+STATS: Dict[str, DefaultDict] = {
+    'purchases': defaultdict(list),   # user_id -> list of payments
+    'refunds': defaultdict(list)      # user_id -> list of refunded payments
 }
 
-TRANSACTIONS: Dict[str, Dict] = {}  # transaction_id -> info
+ADMIN_BALANCE = 0
 
 # Start command
 async def start(update: Update, context: CallbackContext) -> None:
@@ -46,40 +48,47 @@ async def start(update: Update, context: CallbackContext) -> None:
 async def help_command(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(MESSAGES['help'], parse_mode='Markdown')
 
-# Refund command (admin only)
+# Refund command (user can refund, stars go to admin)
 async def refund_command(update: Update, context: CallbackContext) -> None:
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("🚫 Only admin can use this command.")
-        return
-
+    global ADMIN_BALANCE
     if not context.args:
         await update.message.reply_text("Usage: /refund <transaction_id>")
         return
 
-    transaction_id = context.args[0]
-    transaction = TRANSACTIONS.get(transaction_id)
+    refund_id = context.args[0]
+    found = False
+    user_id = update.effective_user.id
+    username = f"@{update.effective_user.username}" if update.effective_user.username else f"ID: {user_id}"
 
-    if not transaction:
-        await update.message.reply_text("❌ Transaction ID not found.")
-        return
+    # Search in purchases
+    for uid, tx_list in STATS['purchases'].items():
+        for tx in tx_list:
+            if tx['id'] == refund_id:
+                # Remove from user
+                tx_list.remove(tx)
+                STATS['refunds'][uid].append(tx)
 
-    try:
-        # Refund logic
-        buyer_id = transaction['user_id']
-        STATS['refunds'][str(buyer_id)] += 1
-        del TRANSACTIONS[transaction_id]
+                # Add stars to admin balance
+                ADMIN_BALANCE += tx['stars']
 
-        await update.message.reply_text(f"✅ Refund successful for Transaction ID: {transaction_id}")
-        # Optionally notify user
-        await context.bot.send_message(
-            chat_id=buyer_id,
-            text=f"💸 Your transaction {transaction_id} has been refunded by admin."
-        )
-    except Exception as e:
-        error_text = ''.join(traceback.format_tb(e.__traceback__))
-        logger.error(error_text)
-        await update.message.reply_text(f"❌ Error processing refund: {str(e)}")
+                found = True
+
+                # Notify admin
+                try:
+                    await context.bot.send_message(
+                        chat_id=ADMIN_ID,
+                        text=f"📩 Refund processed!\nUser: {username}\nStars refunded: {tx['stars']}\nTransaction ID: {refund_id}\nAdmin balance: {ADMIN_BALANCE}"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to notify admin: {e}")
+
+                await update.message.reply_text(f"✅ Refund successful. Stars sent to admin.")
+                break
+        if found:
+            break
+
+    if not found:
+        await update.message.reply_text(f"❌ Transaction ID {refund_id} not found")
 
 # Button handler for items
 async def button_handler(update: Update, context: CallbackContext) -> None:
@@ -127,33 +136,30 @@ async def successful_payment_callback(update: Update, context: CallbackContext) 
     user_id = user.id
     username = f"@{user.username}" if user.username else f"ID: {user_id}"
 
-    # Generate a unique transaction ID
-    transaction_id = str(uuid.uuid4())
-    TRANSACTIONS[transaction_id] = {
-        'user_id': user_id,
-        'item': item['name'],
-        'price': item['price']
-    }
+    # Save transaction
+    STATS['purchases'][str(user_id)].append({
+        "id": payment.telegram_payment_charge_id,
+        "stars": item['price'],
+        "item": item['name']
+    })
 
-    STATS['purchases'][str(user_id)] += 1
-
-    # User confirmation
+    # Notify user
     await update.message.reply_text(
-        f"✅ {item['price']} Star ⭐ successfully sent!\n💰 Waiting for admin payment within 1 hour.\nTransaction ID: `{transaction_id}`",
+        f"✅ {item['price']} Star(s) successfully sent!\n💰 Waiting for admin payment within 1 hour.",
         parse_mode='Markdown'
     )
 
-    # Notify Admin
+    # Notify admin
     try:
         await context.bot.send_message(
             chat_id=ADMIN_ID,
-            text=f"📩 User {username} just sent {item['price']}⭐ for *{item['name']}*.\nTransaction ID: `{transaction_id}`",
+            text=f"📩 User {username} just sent {item['price']}⭐ for *{item['name']}*.\nTransaction ID: {payment.telegram_payment_charge_id}",
             parse_mode='Markdown'
         )
     except Exception as e:
-        logger.error(f"Failed to send admin notification: {e}")
+        logger.error(f"Failed to notify admin: {e}")
 
-# Main function
+# Main
 def main():
     application = Application.builder().token(BOT_TOKEN).build()
 

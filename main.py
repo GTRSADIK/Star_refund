@@ -1,223 +1,204 @@
+"""
+A Telegram bot demonstrating Star payments functionality.
+This bot allows users to purchase digital items using Telegram Stars and request refunds.
+"""
+
 import os
-import json
 import logging
+import traceback
 from collections import defaultdict
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
-from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler,
-    PreCheckoutQueryHandler, MessageHandler, filters, CallbackContext
-)
+from typing import DefaultDict, Dict
 from dotenv import load_dotenv
-from config import ITEMS, MESSAGES, WELCOME_IMAGE
+from telegram import Update, LabeledPrice, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    filters,
+    PreCheckoutQueryHandler,
+    CallbackContext
+)
 
-# Load .env
+from config import ITEMS, MESSAGES
+
+# Load environment variables
 load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
+BOT_TOKEN = os.getenv('BOT_TOKEN')
 
-# Logging
-logging.basicConfig(level=logging.INFO)
+# Setup logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
-# Data store
-STATS = {'purchases': defaultdict(int), 'refunds': defaultdict(int)}
-TRANSACTION_FILE = "transactions.json"
-if not os.path.exists(TRANSACTION_FILE):
-    with open(TRANSACTION_FILE, "w") as f:
-        json.dump({}, f)
-with open(TRANSACTION_FILE, "r") as f:
-    TRANSACTIONS = json.load(f)
+# Store statistics
+STATS: Dict[str, DefaultDict[str, int]] = {
+    'purchases': defaultdict(int),
+    'refunds': defaultdict(int)
+}
 
-def save_transactions():
-    with open(TRANSACTION_FILE, "w") as f:
-        json.dump(TRANSACTIONS, f, indent=4)
 
-# Global temp storage for broadcast
-ADMIN_STATE = {}
+async def start(update: Update, context: CallbackContext) -> None:
+    """Handle /start command - show available items."""
+    keyboard = []
+    for item_id, item in ITEMS.items():
+        keyboard.append([InlineKeyboardButton(
+            f"{item['name']} - {item['price']} ⭐",
+            callback_data=item_id
+        )])
 
-# Start command
-async def start(update: Update, context: CallbackContext):
-    keyboard = [[InlineKeyboardButton("💫 Send Stars", callback_data="send_stars")]]
-    await update.message.reply_photo(
-        photo=WELCOME_IMAGE,
-        caption=MESSAGES['welcome'],
-        reply_markup=InlineKeyboardMarkup(keyboard)
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        MESSAGES['welcome'],
+        reply_markup=reply_markup
     )
 
-# Help command
-async def help_command(update: Update, context: CallbackContext):
-    await update.message.reply_text(MESSAGES['help'])
 
-# Get ID command
-async def getid_command(update: Update, context: CallbackContext):
-    """Send user's Telegram ID or another user's ID by username."""
-    if context.args:
-        username = context.args[0].lstrip('@')
-        try:
-            user = await context.bot.get_chat(username)
-            await update.message.reply_text(
-                f"👤 Username: @{username}\n🆔 ID: `{user.id}`",
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            await update.message.reply_text(
-                f"❌ Could not find username @{username}\nError: {e}"
-            )
-    else:
-        user = update.effective_user
+async def help_command(update: Update, context: CallbackContext) -> None:
+    """Handle /help command - show help information."""
+    await update.message.reply_text(
+        MESSAGES['help'],
+        parse_mode='Markdown'
+    )
+
+
+async def refund_command(update: Update, context: CallbackContext) -> None:
+    """Handle /refund command - process refund requests."""
+    if not context.args:
         await update.message.reply_text(
-            f"👤 Your name: {user.first_name}\n🆔 Your ID: `{user.id}`",
-            parse_mode="Markdown"
+            MESSAGES['refund_usage']
+        )
+        return
+
+    try:
+        charge_id = context.args[0]
+        user_id = update.effective_user.id
+
+        # Call the refund API
+        success = await context.bot.refund_star_payment(
+            user_id=user_id,
+            telegram_payment_charge_id=charge_id
         )
 
-# Refund command (admin only)
-async def refund_command(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("🚫 Only admin can use this command.")
-        return
+        if success:
+            STATS['refunds'][str(user_id)] += 1
+            await update.message.reply_text(MESSAGES['refund_success'])
+        else:
+            await update.message.reply_text(MESSAGES['refund_failed'])
 
-    if not context.args:
-        await update.message.reply_text(MESSAGES['refund_usage'])
-        return
+    except Exception as e:
+        error_text = f"Error type: {type(e).__name__}\n"
+        error_text += f"Error message: {str(e)}\n"
+        error_text += f"Traceback:\n{''.join(traceback.format_tb(e.__traceback__))}"
+        logger.error(error_text)
 
-    transaction_id = context.args[0]
-    if transaction_id not in TRANSACTIONS:
-        await update.message.reply_text("❌ Invalid transaction ID.")
-        return
+        await update.message.reply_text(
+            f"❌ Sorry, there was an error processing your refund:\n"
+            f"Error: {type(e).__name__} - {str(e)}\n\n"
+            "Please make sure you provided the correct transaction ID and try again."
+        )
 
-    transaction = TRANSACTIONS.pop(transaction_id)
-    save_transactions()
-    STATS['refunds'][str(ADMIN_ID)] += transaction['stars']
 
-    await update.message.reply_text(
-        f"✅ Refund successful! {transaction['stars']}⭐ refunded from transaction {transaction_id}."
-    )
-
-# Broadcast command (admin only)
-async def broadcast_command(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("🚫 You are not authorized.")
-        return
-    ADMIN_STATE[user_id] = {"step": "ask_user_id"}
-    await update.message.reply_text("📨 Please send the user ID you want to message:")
-
-# Handle admin responses
-async def handle_admin_message(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        return
-
-    # Step 1: ask user ID
-    if user_id in ADMIN_STATE and ADMIN_STATE[user_id]["step"] == "ask_user_id":
-        try:
-            target_id = int(update.message.text.strip())
-            ADMIN_STATE[user_id] = {"step": "ask_message", "target_id": target_id}
-            await update.message.reply_text(
-                f"✅ Target user set: `{target_id}`\nNow send the message you want to deliver:",
-                parse_mode="Markdown"
-            )
-        except ValueError:
-            await update.message.reply_text("❌ Invalid ID. Please send numeric Telegram user ID.")
-        return
-
-    # Step 2: send message
-    if user_id in ADMIN_STATE and ADMIN_STATE[user_id]["step"] == "ask_message":
-        target_id = ADMIN_STATE[user_id]["target_id"]
-        text_to_send = update.message.text
-
-        try:
-            await context.bot.send_message(chat_id=target_id, text=text_to_send)
-            await update.message.reply_text(
-                f"✅ Message delivered successfully to `{target_id}`",
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            await update.message.reply_text(f"❌ Failed to send: {e}")
-        ADMIN_STATE.pop(user_id, None)
-        return
-
-# Inline button handler
-async def button_handler(update: Update, context: CallbackContext):
+async def button_handler(update: Update, context: CallbackContext) -> None:
+    """Handle button clicks for item selection."""
     query = update.callback_query
-    await query.answer()
-
-    if query.data == "send_stars":
-        keyboard = [
-            [InlineKeyboardButton(f"{item['name']} - {item['price']}⭐", callback_data=item_id)]
-            for item_id, item in ITEMS.items()
-        ]
-        await query.message.reply_text("Select item to buy:", reply_markup=InlineKeyboardMarkup(keyboard))
+    if not query or not query.message:
         return
 
-    item_id = query.data
-    if item_id not in ITEMS:
-        return
+    try:
+        await query.answer()
 
-    item = ITEMS[item_id]
-    await context.bot.send_invoice(
-        chat_id=query.message.chat.id,
-        title=item['name'],
-        description=item['description'],
-        payload=item_id,
-        provider_token="",  # Test mode
-        currency="XTR",
-        prices=[LabeledPrice(item['name'], int(item['price']))],
-        start_parameter="test-payment"
-    )
+        item_id = query.data
+        item = ITEMS[item_id]
 
-# Pre-checkout callback
-async def precheckout_callback(update: Update, context: CallbackContext):
+        # Make sure message exists before trying to use it
+        if not isinstance(query.message, Message):
+            return
+
+        await context.bot.send_invoice(
+            chat_id=query.message.chat_id,
+            title=item['name'],
+            description=item['description'],
+            payload=item_id,
+            provider_token="",  # Empty for digital goods
+            currency="XTR",  # Telegram Stars currency code
+            prices=[LabeledPrice(item['name'], int(item['price']))],
+            start_parameter="start_parameter"
+        )
+
+    except Exception as e:
+        logger.error(f"Error in button_handler: {str(e)}")
+        if query and query.message and isinstance(query.message, Message):
+            await query.message.reply_text(
+                "Sorry, something went wrong while processing your request."
+            )
+
+
+async def precheckout_callback(update: Update, context: CallbackContext) -> None:
+    """Handle pre-checkout queries."""
     query = update.pre_checkout_query
     if query.invoice_payload in ITEMS:
         await query.answer(ok=True)
     else:
-        await query.answer(ok=False, error_message="Invalid item payload.")
+        await query.answer(ok=False, error_message="Something went wrong...")
 
-# Successful payment callback
-async def successful_payment_callback(update: Update, context: CallbackContext):
+
+async def successful_payment_callback(update: Update, context: CallbackContext) -> None:
+    """Handle successful payments."""
     payment = update.message.successful_payment
     item_id = payment.invoice_payload
     item = ITEMS[item_id]
-    user = update.effective_user
-    user_id = user.id
-    username = f"@{user.username}" if user.username else f"ID:{user_id}"
-    stars = int(item['price'])
-    transaction_id = payment.telegram_payment_charge_id
+    user_id = update.effective_user.id
 
-    TRANSACTIONS[transaction_id] = {
-        "user_id": user_id,
-        "username": username,
-        "stars": stars,
-        "item": item['name']
-    }
-    save_transactions()
+    # Update statistics
+    STATS['purchases'][str(user_id)] += 1
 
-    STATS['purchases'][str(user_id)] += stars
-    await update.message.reply_text(f"✅ {stars}⭐ successfully sent!\nWaiting for admin confirmation.")
-    await context.bot.send_message(
-        chat_id=ADMIN_ID,
-        text=f"📩 New Purchase:\nUser: {username}\nStars: {stars}\nItem: {item['name']}\nTransaction ID: `{transaction_id}`",
-        parse_mode="Markdown"
+    logger.info(
+        f"Successful payment from user {user_id} "
+        f"for item {item_id} (charge_id: {payment.telegram_payment_charge_id})"
     )
 
-# Run bot
-def main():
-    app = Application.builder().token(BOT_TOKEN).build()
+    await update.message.reply_text(
+        f"Thank you for your purchase! 🎉\n\n"
+        f"Here's your secret code for {item['name']}:\n"
+        f"`{item['secret']}`\n\n"
+        f"To get a refund, use this command:\n"
+        f"`/refund {payment.telegram_payment_charge_id}`\n\n"
+        "Save this message to request a refund later if needed.",
+        parse_mode='Markdown'
+    )
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("getid", getid_command))
-    app.add_handler(CommandHandler("refund", refund_command))
-    app.add_handler(CommandHandler("broadcast", broadcast_command))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
-    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_admin_message))
 
-    logger.info("🚀 Bot is running...")
-    app.run_polling()
+async def error_handler(update: Update, context: CallbackContext) -> None:
+    """Handle errors caused by Updates."""
+    logger.error(f"Update {update} caused error {context.error}")
 
-if __name__ == "__main__":
+
+def main() -> None:
+    """Start the bot."""
+    try:
+        application = Application.builder().token(BOT_TOKEN).build()
+
+        # Add handlers
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CommandHandler("refund", refund_command))
+        application.add_handler(CallbackQueryHandler(button_handler))
+        application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
+        application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
+
+        # Add error handler
+        application.add_error_handler(error_handler)
+
+        # Start the bot
+        logger.info("Bot started")
+        application.run_polling()
+
+    except Exception as e:
+        logger.error(f"Error starting bot: {str(e)}")
+
+
+if __name__ == '__main__':
     main()

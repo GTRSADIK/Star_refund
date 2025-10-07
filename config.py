@@ -1,63 +1,54 @@
 from typing import Dict, Any
 
-# Star packages for purchase
 ITEMS: Dict[str, Dict[str, Any]] = {
-    'stars_3': {
-        'name': 'FARM GIFT STAR ✨',
+    'ice_cream': {
+        'name': 'Ice Cream 🍦',
+        'price': 1,
+        'description': 'A delicious virtual ice cream',
+        'secret': 'FROZEN2025'
+    },
+    'cookie': {
+        'name': 'Cookie 🍪',
         'price': 3,
-        'description': '0.012×100=1.2 USDT',
-        'value': 3
+        'description': 'A sweet virtual cookie',
+        'secret': 'SWEET2025'
     },
-    'stars_200': {
-        'name': 'FARM GIFT STAR ✨',
-        'price': 200,
-        'description': '0.012×200=2.4 USDT',
-        'value': 200
-    },
-    'stars_500': {
-        'name': 'FARM GIFT STAR ✨',
-        'price': 500,
-        'description': '0.012×500=5.1 USDT',
-        'value': 500
-    },
-    'stars_1000': {
-        'name': 'FARM GIFT STAR ✨',
-        'price': 1000,
-        'description': '0.012×1000=10.2 JSDT',
-        'value': 1000
-    },
-    'stars_2000': {
-        'name': 'FARM GIFT STAR ✨',
-        'price': 2000,
-        'description': '0.012×2000=20.4 USDT',
-        'value': 2000
+    'hamburger': {
+        'name': 'Hamburger 🍔',
+        'price': 5,
+        'description': 'A tasty virtual hamburger',
+        'secret': 'BURGER2025'
     }
 }
 
 MESSAGES = {
     'welcome': (
-        "🎉 Welcome to the Digital Stars Store!\n\n"
-        "Select a Stars package below to purchase using Telegram Stars Star Price 0.012$,:"
+        "Welcome to the Digital Store! 🎉\n"
+        "Select an item to purchase with Telegram Stars:"
     ),
     'help': (
-        "🛒 *Digital Stars Bot Help*\n\n"
+        "🛍 *Digital Store Bot Help*\n\n"
         "Commands:\n"
-        "/start - View available Stars packages\n"
+        "/start - View available items\n"
         "/help - Show this help message\n"
-        "/refund - Request refund (admin only)\n\n"
+        "/refund - Request a refund (requires transaction ID)\n\n"
         "How to use:\n"
-        "1. Use /start to see available Stars packages\n"
-        "2. Click a package to buy with your Stars\n"
-        "3. Receive your Stars instantly\n"
-        "4. Admin can refund with /refund if needed"
+        "1. Use /start to see available items\n"
+        "2. Click on an item to purchase\n"
+        "3. Pay with Stars\n"
+        "4. Receive your secret code\n"
+        "5. Use /refund to get a refund if needed"
     ),
-    'refund_success': "✅ Refund completed successfully! Stars returned to user.",
-    'refund_failed': "❌ Refund failed. Try again later or contact support.",
+    'refund_success': (
+        "✅ Refund processed successfully!\n"
+        "The Stars have been returned to your balance."
+    ),
+    'refund_failed': (
+        "❌ Refund could not be processed.\n"
+        "Please try again later or contact support."
+    ),
     'refund_usage': (
-        "Please provide the transaction ID with /refund command.\n"
+        "Please provide the transaction ID after the /refund command.\n"
         "Example: `/refund YOUR_TRANSACTION_ID`"
     )
 }
-
-# Direct image URL
-WELCOME_IMAGE = "https://cpxmajor.gtrsadikbd.shop/icon.png"

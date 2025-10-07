@@ -2,14 +2,14 @@ from typing import Dict, Any
 
 # Star packages for purchase
 ITEMS: Dict[str, Dict[str, Any]] = {
-    'stars_0.15': {
+    'stars_1': {
         'name': 'FARM GIFT STAR ✨',
-        'price': 0.15,
+        'price': 1,
         'description': '0.012×100=1.2 USDT',
-        'value': 0.15
+        'value': 1
     },
     'stars_200': {
-        'name': 'FARM GOFT STAR ✨',
+        'name': 'FARM GIFT STAR ✨',
         'price': 200,
         'description': '0.012×200=2.4 USDT',
         'value': 200
@@ -21,7 +21,7 @@ ITEMS: Dict[str, Dict[str, Any]] = {
         'value': 500
     },
     'stars_1000': {
-        'name': 'FARM GIFT FARM ✨',
+        'name': 'FARM GIFT STAR ✨',
         'price': 1000,
         'description': '0.012×1000=10.2 JSDT',
         'value': 1000
@@ -29,7 +29,7 @@ ITEMS: Dict[str, Dict[str, Any]] = {
     'stars_2000': {
         'name': 'FARM GIFT STAR ✨',
         'price': 2000,
-        'description': '0.012×200=20.4 USDT',
+        'description': '0.012×2000=20.4 USDT',
         'value': 2000
     }
 }

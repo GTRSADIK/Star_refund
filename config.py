@@ -2,11 +2,11 @@ from typing import Dict, Any
 
 # Star packages for purchase
 ITEMS: Dict[str, Dict[str, Any]] = {
-    'stars_1': {
+    'stars_3': {
         'name': 'FARM GIFT STAR ✨',
-        'price': 1,
+        'price': 3,
         'description': '0.012×100=1.2 USDT',
-        'value': 1
+        'value': 3
     },
     'stars_200': {
         'name': 'FARM GIFT STAR ✨',
